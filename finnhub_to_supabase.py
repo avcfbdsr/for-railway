@@ -191,7 +191,7 @@ async def periodic_upload_loop():
             path = f"{fname}"
 
             # upload to supabase storage
-            res = supabase.storage().from_(SUPABASE_BUCKET).upload(path, excel_bytes)
+            res = supabase.storage.from_(SUPABASE_BUCKET).upload(path, excel_bytes)
             # supabase-py returns dict-like response — print minimal info
             print(f"Uploaded {path} to Supabase bucket {SUPABASE_BUCKET}")
         except Exception as e:
