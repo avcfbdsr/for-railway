@@ -25,7 +25,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "market-excel")
 
 # Replace with symbols you want
-SYMBOLS = ["AAPL", "TSLA"]  # example — add whatever tickers you need
+SYMBOLS = ["BTCUSD"]  # Bitcoin USD pair
 
 # How often to flush/upload Excel file (seconds)
 UPLOAD_INTERVAL = 60 * 5  # upload every 5 minutes (adjust as needed)
@@ -110,6 +110,7 @@ async def handle_message(msg_json):
 async def subscribe(ws, symbols):
     for sym in symbols:
         sub = {"type": "subscribe", "symbol": sym}
+        print(f"Subscribing to: {sym}")
         await ws.send(json.dumps(sub))
         await asyncio.sleep(0.05)  # tiny pause to be polite
 
