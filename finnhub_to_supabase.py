@@ -191,7 +191,11 @@ async def periodic_upload_loop():
             path = f"{fname}"
 
             # upload to supabase storage
-            res = supabase.storage.from_(SUPABASE_BUCKET).upload(path, excel_bytes)
+            res = supabase.storage.from_(SUPABASE_BUCKET).upload(
+                path, 
+                excel_bytes,
+                file_options={"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+            )
             # supabase-py returns dict-like response — print minimal info
             print(f"Uploaded {path} to Supabase bucket {SUPABASE_BUCKET}")
         except Exception as e:
@@ -208,7 +212,7 @@ async def main():
 
     # Create bucket if it doesn't exist
     try:
-        supabase.storage.create_bucket(SUPABASE_BUCKET, {"public": True})
+        supabase.storage.create_bucket(SUPABASE_BUCKET)
         print(f"Created bucket: {SUPABASE_BUCKET}")
     except Exception as e:
         print(f"Bucket creation (may already exist): {e}")
