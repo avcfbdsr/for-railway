@@ -76,8 +76,8 @@ async def handle_message(msg_json):
     """Parse Finnhub message and update stores."""
     # Example message types: {"type":"trade","data":[{...}]}
     try:
-        print(f"Received message type: {t}")  # Less verbose logging
         t = msg_json.get("type")
+        print(f"Received message type: {t}")  # Less verbose logging
         
         if t == "ping":
             # Respond to ping to keep connection alive
