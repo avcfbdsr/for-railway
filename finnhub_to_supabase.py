@@ -93,26 +93,7 @@ async def handle_message(msg_json):
                 ts_s = ts_ms / 1000.0
                 vol = float(trade.get("v", 0))  # Keep as float, don't convert to int
 
-                # Store raw trade in database
-                trade_data = {
-                    "symbol": symbol,
-                    "price": price,
-                    "volume": vol,
-                    "timestamp": datetime.fromtimestamp(ts_s, tz=timezone.utc).isoformat(),
-                    "unix_timestamp": int(ts_s)
-                }
-                
-                try:
-                    # Insert trade to Supabase (batch insert every 100 trades for performance)
-                    raw_trades[symbol].append(trade_data)
-                    if len(raw_trades[symbol]) >= 100:
-                        supabase.table("trades").insert(raw_trades[symbol]).execute()
-                        print(f"📊 Inserted {len(raw_trades[symbol])} trades for {symbol}")
-                        raw_trades[symbol] = []  # Clear after insert
-                except Exception as e:
-                    print(f"❌ Error inserting trades: {e}")
-
-                # update minute aggregation
+                # Just update minute aggregation - no individual trade storage
                 update_agg(symbol, price, vol, ts_s)
 
         # Finnhub may send other messages (ping, subscription ack) — ignore
@@ -256,7 +237,7 @@ async def main():
         return
 
     print("🚀 Starting Bitcoin data collector...")
-    print("📊 Data will be stored in Supabase tables: 'candles' and 'trades'")
+    print("📊 Data will be stored in Supabase 'candles' table")
 
     # Start websocket listener and candle insertion
     await asyncio.gather(
