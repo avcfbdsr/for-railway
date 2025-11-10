@@ -93,16 +93,24 @@ async def handle_message(msg_json):
                 ts_s = ts_ms / 1000.0
                 vol = float(trade.get("v", 0))  # Keep as float, don't convert to int
 
-                # print(f"Trade: {symbol} @ ${price} vol:{vol}")  # Commented out to reduce spam
-
-                # store raw trade
-                raw_trades[symbol].append({
+                # Store raw trade in database
+                trade_data = {
                     "symbol": symbol,
                     "price": price,
                     "volume": vol,
-                    "timestamp_utc": datetime.fromtimestamp(ts_s, tz=timezone.utc).isoformat(),
-                    "ts": ts_s
-                })
+                    "timestamp": datetime.fromtimestamp(ts_s, tz=timezone.utc).isoformat(),
+                    "unix_timestamp": int(ts_s)
+                }
+                
+                try:
+                    # Insert trade to Supabase (batch insert every 100 trades for performance)
+                    raw_trades[symbol].append(trade_data)
+                    if len(raw_trades[symbol]) >= 100:
+                        supabase.table("trades").insert(raw_trades[symbol]).execute()
+                        print(f"📊 Inserted {len(raw_trades[symbol])} trades for {symbol}")
+                        raw_trades[symbol] = []  # Clear after insert
+                except Exception as e:
+                    print(f"❌ Error inserting trades: {e}")
 
                 # update minute aggregation
                 update_agg(symbol, price, vol, ts_s)
@@ -161,22 +169,10 @@ def finalize_old_buckets(cutoff_seconds=None):
             try:
                 # Insert into Supabase table
                 result = supabase.table("candles").insert(candle_data).execute()
-                print(f"Inserted candle: {symbol} {minute_key} O:{b['open']} H:{b['high']} L:{b['low']} C:{b['close']} V:{b['volume']}")
+                print(f"✅ Candle: {symbol} {minute_key} O:{b['open']:.2f} H:{b['high']:.2f} L:{b['low']:.2f} C:{b['close']:.2f} V:{b['volume']:.4f}")
             except Exception as e:
-                print(f"Error inserting candle: {e}")
+                print(f"❌ Error inserting candle: {e}")
             
-            # Also keep in memory for Excel backup
-            minute_candles[symbol].append({
-                "symbol": symbol,
-                "minute": minute_key,
-                "open": b["open"],
-                "high": b["high"],
-                "low": b["low"],
-                "close": b["close"],
-                "volume": b["volume"],
-                "trade_count": b["trade_count"],
-                "start_ts": b["start_ts"]
-            })
             keys_to_finalize.append((symbol, minute_key))
     for k in keys_to_finalize:
         del agg_buckets[k]
@@ -261,26 +257,13 @@ async def main():
         print("Missing FINNHUB_API_KEY or SUPABASE_URL or SUPABASE_KEY in environment.")
         return
 
-    # Create bucket if it doesn't exist
-    try:
-        supabase.storage.create_bucket(SUPABASE_BUCKET)
-        print(f"Created bucket: {SUPABASE_BUCKET}")
-    except Exception as e:
-        print(f"Bucket creation (may already exist): {e}")
+    print("🚀 Starting Bitcoin data collector...")
+    print("📊 Data will be stored in Supabase tables: 'candles' and 'trades'")
 
-    # Create candles table if it doesn't exist
-    try:
-        supabase.table("candles").select("*").limit(1).execute()
-        print("Candles table exists")
-    except Exception as e:
-        print(f"Creating candles table: {e}")
-        # Table will be created automatically on first insert
-
-    # Start websocket listener, candle insertion, and upload loop concurrently
+    # Start websocket listener and candle insertion
     await asyncio.gather(
         websocket_loop(),
-        continuous_candle_loop(),
-        periodic_upload_loop()
+        continuous_candle_loop()
     )
 
 if __name__ == "__main__":
