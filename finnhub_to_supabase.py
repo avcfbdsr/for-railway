@@ -76,14 +76,14 @@ async def handle_message(msg_json):
     """Parse Finnhub message and update stores."""
     # Example message types: {"type":"trade","data":[{...}]}
     try:
-        print(f"Received message: {msg_json}")  # Debug log
+        print(f"Received message type: {t}")  # Less verbose logging
         t = msg_json.get("type")
         
         if t == "ping":
             # Respond to ping to keep connection alive
             return {"type": "pong"}
         elif t == "trade":
-            print(f"Processing {len(msg_json.get('data', []))} trades")  # Debug log
+            print(f"Processing {len(msg_json.get('data', []))} trades for BINANCE:BTCUSDT")  # Less spam
             for trade in msg_json.get("data", []):
                 # trade sample fields: 's' symbol, 'p' price, 't' unix ms timestamp, 'v' volume
                 symbol = trade.get("s")
@@ -91,9 +91,9 @@ async def handle_message(msg_json):
                 # Finnhub trade timestamp is usually milliseconds
                 ts_ms = int(trade.get("t"))
                 ts_s = ts_ms / 1000.0
-                vol = int(trade.get("v", 1))
+                vol = float(trade.get("v", 0))  # Keep as float, don't convert to int
 
-                print(f"Trade: {symbol} @ ${price} vol:{vol}")  # Debug log
+                # print(f"Trade: {symbol} @ ${price} vol:{vol}")  # Commented out to reduce spam
 
                 # store raw trade
                 raw_trades[symbol].append({
