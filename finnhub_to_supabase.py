@@ -222,9 +222,15 @@ async def periodic_upload_loop():
 
             # produce excel
             excel_bytes = build_excel_bytes()
-            # file name with utc timestamp
-            fname = datetime.now(timezone.utc).strftime("market_data_%Y%m%dT%H%M%SZ.xlsx")
+            # Use fixed file name - will overwrite existing file
+            fname = "market_data_live.xlsx"
             path = f"{fname}"
+
+            # Delete existing file first, then upload new one
+            try:
+                supabase.storage.from_(SUPABASE_BUCKET).remove([path])
+            except:
+                pass  # File might not exist yet
 
             # upload to supabase storage
             res = supabase.storage.from_(SUPABASE_BUCKET).upload(
@@ -233,7 +239,7 @@ async def periodic_upload_loop():
                 file_options={"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
             )
             # supabase-py returns dict-like response — print minimal info
-            print(f"Uploaded {path} to Supabase bucket {SUPABASE_BUCKET}")
+            print(f"Updated {path} in Supabase bucket {SUPABASE_BUCKET}")
         except Exception as e:
             print("Upload error:", e)
 
@@ -261,6 +267,14 @@ async def main():
         print(f"Created bucket: {SUPABASE_BUCKET}")
     except Exception as e:
         print(f"Bucket creation (may already exist): {e}")
+
+    # Create candles table if it doesn't exist
+    try:
+        supabase.table("candles").select("*").limit(1).execute()
+        print("Candles table exists")
+    except Exception as e:
+        print(f"Creating candles table: {e}")
+        # Table will be created automatically on first insert
 
     # Start websocket listener, candle insertion, and upload loop concurrently
     await asyncio.gather(
