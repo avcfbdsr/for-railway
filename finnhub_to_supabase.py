@@ -206,6 +206,13 @@ async def main():
         print("Missing FINNHUB_API_KEY or SUPABASE_URL or SUPABASE_KEY in environment.")
         return
 
+    # Create bucket if it doesn't exist
+    try:
+        supabase.storage.create_bucket(SUPABASE_BUCKET, {"public": True})
+        print(f"Created bucket: {SUPABASE_BUCKET}")
+    except Exception as e:
+        print(f"Bucket creation (may already exist): {e}")
+
     # Start websocket listener and upload loop concurrently
     await asyncio.gather(
         websocket_loop(),
