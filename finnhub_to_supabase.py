@@ -138,14 +138,34 @@ async def websocket_loop():
             reconnect_delay = min(60, reconnect_delay * 2)
 
 def finalize_old_buckets(cutoff_seconds=None):
-    """Finalize minute buckets older than cutoff: move to minute_candles and remove from agg_buckets."""
+    """Finalize minute buckets older than cutoff: insert to Supabase and remove from agg_buckets."""
     now = time.time()
     if cutoff_seconds is None:
         cutoff_seconds = 90  # finalize buckets older than 90s (safety margin)
     keys_to_finalize = []
     for (symbol, minute_key), b in list(agg_buckets.items()):
         if now - b["start_ts"] >= cutoff_seconds:
-            # finalize
+            # Insert completed candle to Supabase database
+            candle_data = {
+                "symbol": symbol,
+                "timestamp": minute_key,
+                "open": b["open"],
+                "high": b["high"],
+                "low": b["low"],
+                "close": b["close"],
+                "volume": b["volume"],
+                "trade_count": b["trade_count"],
+                "unix_timestamp": b["start_ts"]
+            }
+            
+            try:
+                # Insert into Supabase table
+                result = supabase.table("candles").insert(candle_data).execute()
+                print(f"Inserted candle: {symbol} {minute_key} O:{b['open']} H:{b['high']} L:{b['low']} C:{b['close']} V:{b['volume']}")
+            except Exception as e:
+                print(f"Error inserting candle: {e}")
+            
+            # Also keep in memory for Excel backup
             minute_candles[symbol].append({
                 "symbol": symbol,
                 "minute": minute_key,
@@ -220,6 +240,15 @@ async def periodic_upload_loop():
         # sleep
         await asyncio.sleep(UPLOAD_INTERVAL)
 
+async def continuous_candle_loop():
+    """Every 10 seconds, check for completed minute candles and insert to Supabase."""
+    while True:
+        try:
+            finalize_old_buckets(cutoff_seconds=70)
+        except Exception as e:
+            print("Candle finalization error:", e)
+        await asyncio.sleep(10)  # Check every 10 seconds
+
 async def main():
     # Basic check: env vars
     if not FINNHUB_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
@@ -233,9 +262,10 @@ async def main():
     except Exception as e:
         print(f"Bucket creation (may already exist): {e}")
 
-    # Start websocket listener and upload loop concurrently
+    # Start websocket listener, candle insertion, and upload loop concurrently
     await asyncio.gather(
         websocket_loop(),
+        continuous_candle_loop(),
         periodic_upload_loop()
     )
 
