@@ -155,21 +155,19 @@ def finalize_old_buckets(cutoff_seconds=None):
         if now - b["start_ts"] >= cutoff_seconds:
             # Insert completed candle to Supabase database
             candle_data = {
-                "symbol": symbol,
                 "timestamp": minute_key,
                 "open": b["open"],
                 "high": b["high"],
                 "low": b["low"],
                 "close": b["close"],
                 "volume": b["volume"],
-                "trade_count": b["trade_count"],
-                "unix_timestamp": b["start_ts"]
+                "trades": b["trade_count"]  # Match your column name
             }
             
             try:
                 # Insert into Supabase table
                 result = supabase.table("candles").insert(candle_data).execute()
-                print(f"✅ Candle: {symbol} {minute_key} O:{b['open']:.2f} H:{b['high']:.2f} L:{b['low']:.2f} C:{b['close']:.2f} V:{b['volume']:.4f}")
+                print(f"✅ Candle: {symbol} {minute_key} O:{b['open']:.2f} H:{b['high']:.2f} L:{b['low']:.2f} C:{b['close']:.2f} V:{b['volume']:.4f} T:{b['trade_count']}")
             except Exception as e:
                 print(f"❌ Error inserting candle: {e}")
             
