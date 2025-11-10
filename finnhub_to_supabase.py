@@ -25,7 +25,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "market-excel")
 
 # Replace with symbols you want
-SYMBOLS = ["BTCUSD"]  # Bitcoin USD pair
+SYMBOLS = ["BINANCE:BTCUSDT", "BTCUSD", "BTC-USD"]  # Try multiple formats
 
 # How often to flush/upload Excel file (seconds)
 UPLOAD_INTERVAL = 60 * 5  # upload every 5 minutes (adjust as needed)
@@ -78,7 +78,11 @@ async def handle_message(msg_json):
     try:
         print(f"Received message: {msg_json}")  # Debug log
         t = msg_json.get("type")
-        if t == "trade":
+        
+        if t == "ping":
+            # Respond to ping to keep connection alive
+            return {"type": "pong"}
+        elif t == "trade":
             print(f"Processing {len(msg_json.get('data', []))} trades")  # Debug log
             for trade in msg_json.get("data", []):
                 # trade sample fields: 's' symbol, 'p' price, 't' unix ms timestamp, 'v' volume
@@ -124,7 +128,9 @@ async def websocket_loop():
                 reconnect_delay = 1
                 async for message in ws:
                     msg_json = json.loads(message)
-                    await handle_message(msg_json)
+                    response = await handle_message(msg_json)
+                    if response:
+                        await ws.send(json.dumps(response))
         except Exception as e:
             print("Websocket error:", e)
             print(f"Reconnecting in {reconnect_delay}s...")
