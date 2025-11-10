@@ -76,8 +76,10 @@ async def handle_message(msg_json):
     """Parse Finnhub message and update stores."""
     # Example message types: {"type":"trade","data":[{...}]}
     try:
+        print(f"Received message: {msg_json}")  # Debug log
         t = msg_json.get("type")
         if t == "trade":
+            print(f"Processing {len(msg_json.get('data', []))} trades")  # Debug log
             for trade in msg_json.get("data", []):
                 # trade sample fields: 's' symbol, 'p' price, 't' unix ms timestamp, 'v' volume
                 symbol = trade.get("s")
@@ -86,6 +88,8 @@ async def handle_message(msg_json):
                 ts_ms = int(trade.get("t"))
                 ts_s = ts_ms / 1000.0
                 vol = int(trade.get("v", 1))
+
+                print(f"Trade: {symbol} @ ${price} vol:{vol}")  # Debug log
 
                 # store raw trade
                 raw_trades[symbol].append({
@@ -183,6 +187,11 @@ async def periodic_upload_loop():
         try:
             # finalize any old minute buckets first
             finalize_old_buckets(cutoff_seconds=70)
+
+            # Debug: show data counts
+            total_trades = sum(len(trades) for trades in raw_trades.values())
+            total_candles = sum(len(candles) for candles in minute_candles.values())
+            print(f"Data summary: {total_trades} trades, {total_candles} candles")
 
             # produce excel
             excel_bytes = build_excel_bytes()
