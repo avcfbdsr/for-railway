@@ -52,6 +52,33 @@ def update_agg(symbol, price, volume, ts):
     """Aggregate trade into the current minute bucket for symbol."""
     minute_key = ts_to_min_key(ts)
     key = (symbol, minute_key)
+    
+    # Check if we're starting a new minute - finalize the previous one immediately
+    current_minute = int(ts) // 60 * 60
+    for (existing_symbol, existing_minute_key), bucket in list(agg_buckets.items()):
+        existing_minute_ts = int(datetime.fromisoformat(existing_minute_key).timestamp())
+        if existing_symbol == symbol and existing_minute_ts < current_minute:
+            # This minute is complete - insert immediately
+            candle_data = {
+                "timestamp": existing_minute_key,
+                "open": bucket["open"],
+                "high": bucket["high"],
+                "low": bucket["low"],
+                "close": bucket["close"],
+                "volume": bucket["volume"],
+                "trades": bucket["trade_count"]
+            }
+            
+            try:
+                supabase.table("candles").insert(candle_data).execute()
+                print(f"🔥 LIVE Candle: {existing_symbol} {existing_minute_key} O:{bucket['open']:.2f} H:{bucket['high']:.2f} L:{bucket['low']:.2f} C:{bucket['close']:.2f} V:{bucket['volume']:.4f} T:{bucket['trade_count']}")
+            except Exception as e:
+                print(f"❌ Error inserting candle: {e}")
+            
+            # Remove completed bucket
+            del agg_buckets[(existing_symbol, existing_minute_key)]
+    
+    # Now update current minute bucket
     if key not in agg_buckets:
         agg_buckets[key] = {
             "symbol": symbol,
@@ -239,11 +266,8 @@ async def main():
     print("🚀 Starting Bitcoin data collector...")
     print("📊 Data will be stored in Supabase 'candles' table")
 
-    # Start websocket listener and candle insertion
-    await asyncio.gather(
-        websocket_loop(),
-        continuous_candle_loop()
-    )
+    # Start websocket listener only - candles insert in real-time
+    await websocket_loop()
 
 if __name__ == "__main__":
     try:
