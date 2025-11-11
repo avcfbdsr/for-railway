@@ -109,29 +109,27 @@ def update_agg(symbol, price, volume, ts):
 
 async def handle_message(msg_json):
     """Parse Finnhub message and update stores."""
-    # Example message types: {"type":"trade","data":[{...}]}
     try:
         t = msg_json.get("type")
-        print(f"Received message type: {t}")  # Less verbose logging
         
         if t == "ping":
-            # Respond to ping to keep connection alive
+            # Don't log every ping - too spammy
             return {"type": "pong"}
         elif t == "trade":
-            print(f"Processing {len(msg_json.get('data', []))} trades for BINANCE:BTCUSDT")  # Less spam
+            print(f"📈 Processing {len(msg_json.get('data', []))} trades for BINANCE:BTCUSDT")
             for trade in msg_json.get("data", []):
-                # trade sample fields: 's' symbol, 'p' price, 't' unix ms timestamp, 'v' volume
                 symbol = trade.get("s")
                 price = float(trade.get("p"))
-                # Finnhub trade timestamp is usually milliseconds
                 ts_ms = int(trade.get("t"))
                 ts_s = ts_ms / 1000.0
-                vol = float(trade.get("v", 0))  # Keep as float, don't convert to int
+                vol = float(trade.get("v", 0))
 
                 # Just update minute aggregation - no individual trade storage
                 update_agg(symbol, price, vol, ts_s)
+        else:
+            # Log other message types to debug
+            print(f"🔍 Received message type: {t} - {msg_json}")
 
-        # Finnhub may send other messages (ping, subscription ack) — ignore
     except Exception as e:
         print("Error handling message:", e)
 
@@ -293,7 +291,9 @@ async def main():
         return
 
     print("🚀 Starting Bitcoin data collector...")
+    print(f"🔑 Using Finnhub API key: {FINNHUB_API_KEY[:10]}...")
     print("📊 Data will be stored in Supabase 'candles' table")
+    print("⚠️  If you only see ping messages, your Finnhub API key may not have real-time data access")
 
     # Start websocket listener and status reporter
     await asyncio.gather(
