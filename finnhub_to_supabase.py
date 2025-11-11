@@ -220,19 +220,19 @@ async def subscribe(ws, symbols):
         await asyncio.sleep(0.05)  # tiny pause to be polite
 
 async def websocket_loop():
-    reconnect_delay = 1
-    max_reconnect_delay = 300  # 5 minutes max
+    reconnect_delay = 5  # Start with longer delay to avoid rate limits
+    max_reconnect_delay = 600  # 10 minutes max to avoid rate limits
     
     while True:
         try:
             print(f"🔌 Connecting to Finnhub websocket...")
             async with websockets.connect(
                 WS_URL, 
-                ping_interval=20, 
-                ping_timeout=10,
-                close_timeout=10,
-                max_size=2**20,  # 1MB max message size
-                compression=None  # Disable compression for stability
+                ping_interval=30,  # Longer ping interval
+                ping_timeout=15,
+                close_timeout=15,
+                max_size=2**20,
+                compression=None
             ) as ws:
                 print("✅ Connected to Finnhub websocket")
                 
@@ -245,9 +245,9 @@ async def websocket_loop():
                         print(f"❌ Subscription attempt {attempt+1} failed: {e}")
                         if attempt == 2:
                             raise
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
                 
-                reconnect_delay = 1  # Reset delay on successful connection
+                reconnect_delay = 5  # Reset to minimum on successful connection
                 
                 # Message processing loop with error isolation
                 async for message in ws:
@@ -263,22 +263,25 @@ async def websocket_loop():
                                 await ws.send(json.dumps(response))
                             except Exception as send_error:
                                 print(f"❌ Failed to send response: {send_error}")
-                                # Don't break connection for send failures
                                 
                     except json.JSONDecodeError as e:
                         print(f"❌ Invalid JSON received: {e}")
-                        continue  # Skip bad messages
+                        continue
                     except Exception as e:
                         print(f"❌ Message processing error: {e}")
-                        continue  # Don't break connection for message errors
+                        continue
                         
         except websockets.exceptions.ConnectionClosed as e:
             print(f"🔌 Connection closed: {e}")
         except websockets.exceptions.InvalidURI as e:
             print(f"❌ Invalid websocket URI: {e}")
-            await asyncio.sleep(60)  # Wait longer for config issues
+            await asyncio.sleep(120)  # Wait longer for config issues
         except websockets.exceptions.InvalidHandshake as e:
-            print(f"❌ Handshake failed: {e}")
+            if "429" in str(e):
+                print(f"🚫 Rate limited by Finnhub - cooling down...")
+                reconnect_delay = min(max_reconnect_delay, reconnect_delay * 2)  # Double delay on rate limit
+            else:
+                print(f"❌ Handshake failed: {e}")
         except OSError as e:
             print(f"❌ Network error: {e}")
         except asyncio.TimeoutError as e:
@@ -286,12 +289,12 @@ async def websocket_loop():
         except Exception as e:
             print(f"❌ Unexpected websocket error: {e}")
         
-        # Exponential backoff with jitter
-        jitter = min(5, reconnect_delay * 0.1)
+        # Longer delays to avoid rate limits
+        jitter = min(10, reconnect_delay * 0.1)
         sleep_time = reconnect_delay + jitter
-        print(f"🔄 Reconnecting in {sleep_time:.1f}s...")
+        print(f"🔄 Reconnecting in {sleep_time:.1f}s... (avoiding rate limits)")
         await asyncio.sleep(sleep_time)
-        reconnect_delay = min(max_reconnect_delay, reconnect_delay * 1.5)
+        reconnect_delay = min(max_reconnect_delay, reconnect_delay * 1.2)  # Slower increase
 
 def finalize_old_buckets(cutoff_seconds=None):
     """Finalize minute buckets older than cutoff: insert to Supabase and remove from agg_buckets."""
@@ -432,6 +435,19 @@ async def resource_monitor():
         except Exception as e:
             print(f"❌ Resource monitor error: {e}")
             await asyncio.sleep(60)
+
+async def status_reporter():
+    """Report status with minimal resource usage"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # 1 hour intervals to reduce rate limit pressure
+            current_time = datetime.now(IST).strftime("%H:%M IST")
+            runtime_hours = (time.time() - start_time) / 3600
+            print(f"📊 Status at {current_time}: {candle_count} candles ({runtime_hours:.1f}h uptime)")
+            print(f"🚫 Rate limit protection: Longer delays, reduced connections")
+        except Exception as e:
+            print(f"❌ Status reporter error: {e}")
+            await asyncio.sleep(300)
 
 async def main():
     """Main function with bulletproof error handling"""
