@@ -46,6 +46,24 @@ agg_buckets = {}
 # Supabase client
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Global counters
+candle_count = 0
+last_candle_time = None
+
+async def insert_candle_with_retry(candle_data, max_retries=3):
+    """Insert candle to database with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            result = supabase.table("candles").insert(candle_data).execute()
+            return True
+        except Exception as e:
+            print(f"❌ Database insert attempt {attempt+1} failed: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            else:
+                print(f"❌ Failed to insert candle after {max_retries} attempts")
+                return False
+
 def ts_to_min_key(ts_seconds):
     # returns minute key in IST like 2025-11-11T09:46:00+05:30
     dt = datetime.fromtimestamp(ts_seconds, tz=IST).replace(second=0, microsecond=0)
@@ -116,30 +134,61 @@ def update_agg(symbol, price, volume, ts):
         b["trade_count"] += 1
 
 async def handle_message(msg_json):
-    """Parse Finnhub message and update stores."""
+    """Parse Finnhub message and update stores with bulletproof error handling."""
     try:
+        if not isinstance(msg_json, dict):
+            return None
+            
         t = msg_json.get("type")
         
         if t == "ping":
-            # Don't log every ping - too spammy
             return {"type": "pong"}
         elif t == "trade":
-            print(f"📈 Processing {len(msg_json.get('data', []))} trades for BINANCE:BTCUSDT")
-            for trade in msg_json.get("data", []):
-                symbol = trade.get("s")
-                price = float(trade.get("p"))
-                ts_ms = int(trade.get("t"))
-                ts_s = ts_ms / 1000.0
-                vol = float(trade.get("v", 0))
-
-                # Just update minute aggregation - no individual trade storage
-                update_agg(symbol, price, vol, ts_s)
+            data = msg_json.get("data", [])
+            if not data:
+                return None
+                
+            print(f"📈 Processing {len(data)} trades for BINANCE:BTCUSDT")
+            
+            for trade in data:
+                try:
+                    if not isinstance(trade, dict):
+                        continue
+                        
+                    symbol = trade.get("s")
+                    price = trade.get("p")
+                    timestamp = trade.get("t")
+                    volume = trade.get("v")
+                    
+                    # Validate required fields
+                    if not all([symbol, price is not None, timestamp is not None]):
+                        continue
+                        
+                    price = float(price)
+                    ts_ms = int(timestamp)
+                    ts_s = ts_ms / 1000.0
+                    vol = float(volume) if volume is not None else 0.0
+                    
+                    # Sanity checks
+                    if price <= 0 or ts_s <= 0 or vol < 0:
+                        continue
+                        
+                    update_agg(symbol, price, vol, ts_s)
+                    
+                except (ValueError, TypeError, KeyError) as e:
+                    print(f"❌ Invalid trade data: {e}")
+                    continue
+                except Exception as e:
+                    print(f"❌ Trade processing error: {e}")
+                    continue
         else:
-            # Log other message types to debug
-            print(f"🔍 Received message type: {t} - {msg_json}")
+            # Log unknown message types for debugging
+            print(f"🔍 Unknown message type: {t}")
 
     except Exception as e:
-        print("Error handling message:", e)
+        print(f"❌ Message handling error: {e}")
+    
+    return None
 
 async def subscribe(ws, symbols):
     for sym in symbols:
@@ -150,6 +199,8 @@ async def subscribe(ws, symbols):
 
 async def websocket_loop():
     reconnect_delay = 1
+    max_reconnect_delay = 300  # 5 minutes max
+    
     while True:
         try:
             print(f"🔌 Connecting to Finnhub websocket...")
@@ -157,30 +208,68 @@ async def websocket_loop():
                 WS_URL, 
                 ping_interval=20, 
                 ping_timeout=10,
-                close_timeout=10
+                close_timeout=10,
+                max_size=2**20,  # 1MB max message size
+                compression=None  # Disable compression for stability
             ) as ws:
                 print("✅ Connected to Finnhub websocket")
-                await subscribe(ws, SYMBOLS)
-                reconnect_delay = 1
                 
+                # Subscribe with retry logic
+                for attempt in range(3):
+                    try:
+                        await subscribe(ws, SYMBOLS)
+                        break
+                    except Exception as e:
+                        print(f"❌ Subscription attempt {attempt+1} failed: {e}")
+                        if attempt == 2:
+                            raise
+                        await asyncio.sleep(1)
+                
+                reconnect_delay = 1  # Reset delay on successful connection
+                
+                # Message processing loop with error isolation
                 async for message in ws:
                     try:
+                        if not message or len(message) == 0:
+                            continue
+                            
                         msg_json = json.loads(message)
                         response = await handle_message(msg_json)
+                        
                         if response:
-                            await ws.send(json.dumps(response))
+                            try:
+                                await ws.send(json.dumps(response))
+                            except Exception as send_error:
+                                print(f"❌ Failed to send response: {send_error}")
+                                # Don't break connection for send failures
+                                
+                    except json.JSONDecodeError as e:
+                        print(f"❌ Invalid JSON received: {e}")
+                        continue  # Skip bad messages
                     except Exception as e:
-                        print(f"❌ Message handling error: {e}")
-                        continue
+                        print(f"❌ Message processing error: {e}")
+                        continue  # Don't break connection for message errors
                         
         except websockets.exceptions.ConnectionClosed as e:
             print(f"🔌 Connection closed: {e}")
+        except websockets.exceptions.InvalidURI as e:
+            print(f"❌ Invalid websocket URI: {e}")
+            await asyncio.sleep(60)  # Wait longer for config issues
+        except websockets.exceptions.InvalidHandshake as e:
+            print(f"❌ Handshake failed: {e}")
+        except OSError as e:
+            print(f"❌ Network error: {e}")
+        except asyncio.TimeoutError as e:
+            print(f"❌ Connection timeout: {e}")
         except Exception as e:
-            print(f"❌ Websocket error: {e}")
+            print(f"❌ Unexpected websocket error: {e}")
         
-        print(f"🔄 Reconnecting in {reconnect_delay}s...")
-        await asyncio.sleep(reconnect_delay)
-        reconnect_delay = min(30, reconnect_delay * 1.5)  # Exponential backoff
+        # Exponential backoff with jitter
+        jitter = min(5, reconnect_delay * 0.1)
+        sleep_time = reconnect_delay + jitter
+        print(f"🔄 Reconnecting in {sleep_time:.1f}s...")
+        await asyncio.sleep(sleep_time)
+        reconnect_delay = min(max_reconnect_delay, reconnect_delay * 1.5)
 
 def finalize_old_buckets(cutoff_seconds=None):
     """Finalize minute buckets older than cutoff: insert to Supabase and remove from agg_buckets."""
@@ -287,28 +376,79 @@ async def continuous_candle_loop():
         await asyncio.sleep(10)  # Check every 10 seconds
 
 async def status_reporter():
-    """Report status every 10 minutes"""
+    """Report status every 10 minutes with error handling"""
     while True:
-        await asyncio.sleep(600)  # 10 minutes
-        current_time = datetime.now(IST).strftime("%H:%M IST")
-        print(f"📊 Status at {current_time}: {candle_count} candles created. Last: {last_candle_time}")
+        try:
+            await asyncio.sleep(600)  # 10 minutes
+            current_time = datetime.now(IST).strftime("%H:%M IST")
+            active_buckets = len(agg_buckets)
+            print(f"📊 Status at {current_time}: {candle_count} candles created, {active_buckets} active buckets. Last: {last_candle_time}")
+        except Exception as e:
+            print(f"❌ Status reporter error: {e}")
+            await asyncio.sleep(60)  # Wait 1 minute on error
 
 async def main():
-    # Basic check: env vars
-    if not FINNHUB_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
-        print("Missing FINNHUB_API_KEY or SUPABASE_URL or SUPABASE_KEY in environment.")
-        return
+    """Main function with bulletproof error handling"""
+    try:
+        # Basic check: env vars
+        if not FINNHUB_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
+            print("❌ Missing required environment variables")
+            print("Required: FINNHUB_API_KEY, SUPABASE_URL, SUPABASE_KEY")
+            return
 
-    print("🚀 Starting Bitcoin data collector...")
-    print(f"🔑 Using Finnhub API key: {FINNHUB_API_KEY[:10]}...")
-    print("📊 Data will be stored in Supabase 'candles' table")
-    print("⚠️  If you only see ping messages, your Finnhub API key may not have real-time data access")
+        print("🚀 Starting Bitcoin data collector...")
+        print(f"🔑 Using Finnhub API key: {FINNHUB_API_KEY[:10]}...")
+        print("📊 Data will be stored in Supabase 'candles' table")
+        print("⚠️  If you only see ping messages, your Finnhub API key may not have real-time data access")
+        print("🛡️  Bulletproof mode: Will never stop running")
 
-    # Start websocket listener and status reporter
-    await asyncio.gather(
-        websocket_loop(),
-        status_reporter()
-    )
+        # Test Supabase connection
+        try:
+            test_result = supabase.table("candles").select("*").limit(1).execute()
+            print("✅ Supabase connection verified")
+        except Exception as e:
+            print(f"⚠️  Supabase connection warning: {e}")
+            print("🔄 Will continue anyway - connection may recover")
+
+        # Start all services with error isolation
+        tasks = [
+            asyncio.create_task(websocket_loop()),
+            asyncio.create_task(status_reporter())
+        ]
+        
+        # Run forever with automatic restart on any failure
+        while True:
+            try:
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                
+                # If any task completed (crashed), restart it
+                for task in done:
+                    try:
+                        await task  # Get the exception if any
+                    except Exception as e:
+                        print(f"❌ Task crashed: {e}")
+                    
+                    # Restart the crashed task
+                    if task in tasks:
+                        task_index = tasks.index(task)
+                        if task_index == 0:  # websocket_loop
+                            print("🔄 Restarting websocket loop...")
+                            tasks[0] = asyncio.create_task(websocket_loop())
+                        elif task_index == 1:  # status_reporter
+                            print("🔄 Restarting status reporter...")
+                            tasks[1] = asyncio.create_task(status_reporter())
+                
+                await asyncio.sleep(1)  # Brief pause before checking again
+                
+            except Exception as e:
+                print(f"❌ Main loop error: {e}")
+                await asyncio.sleep(5)  # Wait before retrying
+                
+    except Exception as e:
+        print(f"❌ Critical error in main: {e}")
+        print("🔄 Restarting in 10 seconds...")
+        await asyncio.sleep(10)
+        await main()  # Recursive restart
 
 if __name__ == "__main__":
     try:
