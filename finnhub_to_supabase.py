@@ -220,81 +220,94 @@ async def subscribe(ws, symbols):
         await asyncio.sleep(0.05)  # tiny pause to be polite
 
 async def websocket_loop():
-    reconnect_delay = 5  # Start with longer delay to avoid rate limits
-    max_reconnect_delay = 600  # 10 minutes max to avoid rate limits
+    """Optimized WebSocket connection based on Finnhub documentation"""
+    reconnect_delay = 30  # Start with 30 seconds as per documentation
+    max_reconnect_delay = 900  # 15 minutes max
     
     while True:
         try:
-            print(f"🔌 Connecting to Finnhub websocket...")
+            print(f"🔌 Connecting to Finnhub WebSocket (1 connection per API key limit)...")
+            
+            # Use official Finnhub WebSocket approach
             async with websockets.connect(
-                WS_URL, 
-                ping_interval=30,  # Longer ping interval
-                ping_timeout=15,
-                close_timeout=15,
-                max_size=2**20,
+                WS_URL,
+                ping_interval=30,  # Longer ping intervals to reduce API calls
+                ping_timeout=20,
+                close_timeout=20,
+                max_size=None,  # No size limit
                 compression=None
             ) as ws:
-                print("✅ Connected to Finnhub websocket")
+                print("✅ Connected to Finnhub WebSocket")
                 
-                # Subscribe with retry logic
-                for attempt in range(3):
-                    try:
-                        await subscribe(ws, SYMBOLS)
-                        break
-                    except Exception as e:
-                        print(f"❌ Subscription attempt {attempt+1} failed: {e}")
-                        if attempt == 2:
-                            raise
-                        await asyncio.sleep(2)
+                # Subscribe to symbols (official format)
+                for symbol in SYMBOLS:
+                    subscription = {"type": "subscribe", "symbol": symbol}
+                    await ws.send(json.dumps(subscription))
+                    print(f"📡 Subscribed to {symbol}")
+                    await asyncio.sleep(0.1)  # Small delay between subscriptions
                 
-                reconnect_delay = 5  # Reset to minimum on successful connection
+                reconnect_delay = 30  # Reset on successful connection
                 
-                # Message processing loop with error isolation
+                # Message processing loop
                 async for message in ws:
                     try:
-                        if not message or len(message) == 0:
+                        if not message:
                             continue
                             
                         msg_json = json.loads(message)
-                        response = await handle_message(msg_json)
+                        msg_type = msg_json.get("type")
                         
-                        if response:
-                            try:
-                                await ws.send(json.dumps(response))
-                            except Exception as send_error:
-                                print(f"❌ Failed to send response: {send_error}")
+                        if msg_type == "ping":
+                            # Respond to ping to keep connection alive
+                            await ws.send(json.dumps({"type": "pong"}))
+                        elif msg_type == "trade":
+                            # Process trade data
+                            data = msg_json.get("data", [])
+                            if data:
+                                symbol = data[0].get("s", "Unknown")
+                                print(f"📈 Processing {len(data)} trades for {symbol}")
                                 
-                    except json.JSONDecodeError as e:
-                        print(f"❌ Invalid JSON received: {e}")
+                                for trade in data:
+                                    try:
+                                        symbol = trade.get("s")
+                                        price = float(trade.get("p"))
+                                        ts_ms = int(trade.get("t"))
+                                        ts_s = ts_ms / 1000.0
+                                        vol = float(trade.get("v", 0))
+                                        
+                                        if price > 0 and ts_s > 0:
+                                            update_agg(symbol, price, vol, ts_s)
+                                    except (ValueError, TypeError, KeyError):
+                                        continue
+                        elif msg_type == "error":
+                            error_msg = msg_json.get("msg", "Unknown error")
+                            print(f"❌ Finnhub error: {error_msg}")
+                            if "Invalid symbol" in error_msg:
+                                print("⚠️  Invalid symbol detected - continuing with valid symbols")
+                            
+                    except json.JSONDecodeError:
                         continue
                     except Exception as e:
                         print(f"❌ Message processing error: {e}")
                         continue
                         
         except websockets.exceptions.ConnectionClosed as e:
-            print(f"🔌 Connection closed: {e}")
-        except websockets.exceptions.InvalidURI as e:
-            print(f"❌ Invalid websocket URI: {e}")
-            await asyncio.sleep(120)  # Wait longer for config issues
+            print(f"🔌 WebSocket connection closed: {e}")
         except websockets.exceptions.InvalidHandshake as e:
             if "429" in str(e):
-                print(f"🚫 Rate limited by Finnhub - cooling down...")
-                reconnect_delay = min(max_reconnect_delay, reconnect_delay * 2)  # Double delay on rate limit
+                print(f"🚫 Rate limited by Finnhub - implementing exponential backoff")
+                reconnect_delay = min(max_reconnect_delay, reconnect_delay * 2)
             else:
-                print(f"❌ Handshake failed: {e}")
-        except OSError as e:
-            print(f"❌ Network error: {e}")
-        except asyncio.TimeoutError as e:
-            print(f"❌ Connection timeout: {e}")
+                print(f"❌ WebSocket handshake failed: {e}")
         except Exception as e:
-            print(f"❌ Unexpected websocket error: {e}")
+            print(f"❌ WebSocket error: {e}")
         
-        # Longer delays to avoid rate limits
-        jitter = min(10, reconnect_delay * 0.1)
-        sleep_time = reconnect_delay + jitter
-        print(f"🔄 Reconnecting in {sleep_time:.1f}s... (avoiding rate limits)")
-        await asyncio.sleep(sleep_time)
-        reconnect_delay = min(max_reconnect_delay, reconnect_delay * 1.2)  # Slower increase
+        # Exponential backoff with maximum delay
+        print(f"🔄 Reconnecting in {reconnect_delay}s (respecting Finnhub rate limits)...")
+        await asyncio.sleep(reconnect_delay)
+        
+        # Increase delay for next attempt (exponential backoff)
+        reconnect_delay = min(max_reconnect_delay, int(reconnect_delay * 1.5))
 
 def finalize_old_buckets(cutoff_seconds=None):
     """Finalize minute buckets older than cutoff: insert to Supabase and remove from agg_buckets."""
