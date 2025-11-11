@@ -8,6 +8,7 @@ import os
 import asyncio
 import json
 import time
+import gc  # Garbage collection for memory efficiency
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import io
@@ -21,6 +22,10 @@ load_dotenv()
 
 # Indian Standard Time (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# Resource efficiency settings
+MEMORY_CLEANUP_INTERVAL = 300  # Clean memory every 5 minutes
+MAX_MEMORY_BUCKETS = 10  # Limit active buckets to save RAM
 
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -387,17 +392,41 @@ async def continuous_candle_loop():
             print("Candle finalization error:", e)
         await asyncio.sleep(10)  # Check every 10 seconds
 
-async def status_reporter():
-    """Report status every 10 minutes with error handling"""
+async def resource_monitor():
+    """Monitor and optimize resource usage to maximize Railway credits"""
     while True:
         try:
-            await asyncio.sleep(600)  # 10 minutes
-            current_time = datetime.now(IST).strftime("%H:%M IST")
-            active_buckets = len(agg_buckets)
-            print(f"📊 Status at {current_time}: {candle_count} candles created, {active_buckets} active buckets. Last: {last_candle_time}")
+            await asyncio.sleep(MEMORY_CLEANUP_INTERVAL)
+            
+            # Clean up old buckets to save memory
+            current_time = time.time()
+            old_buckets = []
+            
+            for key, bucket in list(agg_buckets.items()):
+                if current_time - bucket.get("start_ts", 0) > 300:  # 5 minutes old
+                    old_buckets.append(key)
+            
+            for key in old_buckets:
+                del agg_buckets[key]
+            
+            # Force garbage collection to free memory
+            gc.collect()
+            
+            # Log resource status
+            bucket_count = len(agg_buckets)
+            current_time_ist = datetime.now(IST).strftime("%H:%M IST")
+            print(f"🔧 Resource cleanup at {current_time_ist}: {bucket_count} active buckets, {old_buckets.__len__()} cleaned")
+            
+            # Limit active buckets to prevent memory bloat
+            if bucket_count > MAX_MEMORY_BUCKETS:
+                excess_keys = list(agg_buckets.keys())[MAX_MEMORY_BUCKETS:]
+                for key in excess_keys:
+                    del agg_buckets[key]
+                print(f"⚠️  Memory limit: Removed {len(excess_keys)} excess buckets")
+                
         except Exception as e:
-            print(f"❌ Status reporter error: {e}")
-            await asyncio.sleep(60)  # Wait 1 minute on error
+            print(f"❌ Resource monitor error: {e}")
+            await asyncio.sleep(60)
 
 async def main():
     """Main function with bulletproof error handling"""
@@ -422,10 +451,11 @@ async def main():
             print(f"⚠️  Supabase connection warning: {e}")
             print("🔄 Will continue anyway - connection may recover")
 
-        # Start all services with error isolation
+        # Start all services with error isolation and resource efficiency
         tasks = [
             asyncio.create_task(websocket_loop()),
-            asyncio.create_task(status_reporter())
+            asyncio.create_task(status_reporter()),
+            asyncio.create_task(resource_monitor())
         ]
         
         # Run forever with automatic restart on any failure
@@ -449,6 +479,9 @@ async def main():
                         elif task_index == 1:  # status_reporter
                             print("🔄 Restarting status reporter...")
                             tasks[1] = asyncio.create_task(status_reporter())
+                        elif task_index == 2:  # resource_monitor
+                            print("🔄 Restarting resource monitor...")
+                            tasks[2] = asyncio.create_task(resource_monitor())
                 
                 await asyncio.sleep(1)  # Brief pause before checking again
                 
