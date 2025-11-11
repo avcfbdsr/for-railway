@@ -27,8 +27,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "market-excel")
 
-# Replace with symbols you want
-SYMBOLS = ["BINANCE:BTCUSDT", "BTCUSD", "BTC-USD"]  # Try multiple formats
+# Replace with symbols you want - using exact TradingView format
+SYMBOLS = ["BTCUSD"]  # Standard BTC/USD pair like TradingView
 
 # How often to flush/upload Excel file (seconds)
 UPLOAD_INTERVAL = 60 * 5  # upload every 5 minutes (adjust as needed)
@@ -148,7 +148,7 @@ async def handle_message(msg_json):
             if not data:
                 return None
                 
-            print(f"📈 Processing {len(data)} trades for BINANCE:BTCUSDT")
+            print(f"📈 Processing {len(data)} trades for {symbol}")
             
             for trade in data:
                 try:
@@ -163,6 +163,10 @@ async def handle_message(msg_json):
                     # Validate required fields
                     if not all([symbol, price is not None, timestamp is not None]):
                         continue
+                    
+                    # Log first few trades to verify data source
+                    if candle_count < 3:
+                        print(f"🔍 Trade data: {symbol} @ ${price} vol:{volume} time:{timestamp}")
                         
                     price = float(price)
                     ts_ms = int(timestamp)
