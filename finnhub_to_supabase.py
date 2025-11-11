@@ -8,7 +8,7 @@ import os
 import asyncio
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import io
 
@@ -18,6 +18,9 @@ from supabase import create_client  # supabase-py
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Indian Standard Time (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -44,8 +47,8 @@ agg_buckets = {}
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def ts_to_min_key(ts_seconds):
-    # returns minute key like 2025-11-11T12:34:00Z
-    dt = datetime.fromtimestamp(ts_seconds, tz=timezone.utc).replace(second=0, microsecond=0)
+    # returns minute key in IST like 2025-11-11T09:46:00+05:30
+    dt = datetime.fromtimestamp(ts_seconds, tz=IST).replace(second=0, microsecond=0)
     return dt.isoformat()
 
 # Global counters
@@ -79,7 +82,8 @@ def update_agg(symbol, price, volume, ts):
                 supabase.table("candles").insert(candle_data).execute()
                 candle_count += 1
                 last_candle_time = existing_minute_key
-                print(f"🔥 Candle #{candle_count}: {existing_symbol} {existing_minute_key} O:{bucket['open']:.2f} H:{bucket['high']:.2f} L:{bucket['low']:.2f} C:{bucket['close']:.2f} V:{bucket['volume']:.4f} T:{bucket['trade_count']}")
+                ist_time = datetime.fromisoformat(existing_minute_key).strftime("%H:%M IST")
+                print(f"🔥 Candle #{candle_count} at {ist_time}: {existing_symbol} O:{bucket['open']:.2f} H:{bucket['high']:.2f} L:{bucket['low']:.2f} C:{bucket['close']:.2f} V:{bucket['volume']:.4f} T:{bucket['trade_count']}")
             except Exception as e:
                 print(f"❌ Error inserting candle: {e}")
             
@@ -282,7 +286,8 @@ async def status_reporter():
     """Report status every 10 minutes"""
     while True:
         await asyncio.sleep(600)  # 10 minutes
-        print(f"📊 Status: {candle_count} candles created. Last: {last_candle_time}")
+        current_time = datetime.now(IST).strftime("%H:%M IST")
+        print(f"📊 Status at {current_time}: {candle_count} candles created. Last: {last_candle_time}")
 
 async def main():
     # Basic check: env vars
