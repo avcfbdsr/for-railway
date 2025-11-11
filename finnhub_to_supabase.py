@@ -26,6 +26,11 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # Resource efficiency settings
 MEMORY_CLEANUP_INTERVAL = 300  # Clean memory every 5 minutes
 MAX_MEMORY_BUCKETS = 10  # Limit active buckets to save RAM
+EMERGENCY_MODE_THRESHOLD = 24  # Hours to trigger emergency mode
+
+# Credit tracking
+start_time = time.time()
+daily_credit_budget = 4.77 / 29  # ~$0.16 per day
 
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -442,6 +447,8 @@ async def main():
         print("📊 Data will be stored in Supabase 'candles' table")
         print("⚠️  If you only see ping messages, your Finnhub API key may not have real-time data access")
         print("🛡️  Bulletproof mode: Will never stop running")
+        print(f"💰 Railway Credits: $4.77 for 29 days (~$0.16/day budget)")
+        print(f"⚡ Ultra-efficient mode: Optimized for maximum uptime")
 
         # Test Supabase connection
         try:
