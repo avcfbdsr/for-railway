@@ -67,9 +67,13 @@ def update_agg(symbol, price, volume, ts):
     for (existing_symbol, existing_minute_key), bucket in list(agg_buckets.items()):
         existing_minute_ts = int(datetime.fromisoformat(existing_minute_key).timestamp())
         if existing_symbol == symbol and existing_minute_ts < current_minute:
-            # This minute is complete - insert immediately
+            # This minute is complete - insert immediately  
+            # Convert UTC timestamp to IST
+            utc_dt = datetime.fromisoformat(existing_minute_key.replace('+05:30', '+00:00'))
+            ist_dt = utc_dt.replace(tzinfo=timezone.utc).astimezone(IST)
+            
             candle_data = {
-                "timestamp": existing_minute_key,
+                "timestamp": ist_dt.isoformat(),
                 "open": bucket["open"],
                 "high": bucket["high"],
                 "low": bucket["low"],
