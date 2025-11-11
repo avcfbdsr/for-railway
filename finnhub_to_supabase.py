@@ -27,8 +27,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "market-excel")
 
-# Replace with symbols you want - using exact TradingView symbol
-SYMBOLS = ["BINANCE:BTCUSD"]  # Exact match with TradingView: Bitcoin / U.S. Dollar on Binance
+# Replace with symbols you want - try multiple Bitcoin symbols
+SYMBOLS = ["BINANCE:BTCUSD", "BINANCE:BTCUSDT", "BTCUSD"]  # Try multiple formats
 
 # How often to flush/upload Excel file (seconds)
 UPLOAD_INTERVAL = 60 * 5  # upload every 5 minutes (adjust as needed)
@@ -186,8 +186,14 @@ async def handle_message(msg_json):
                     print(f"❌ Trade processing error: {e}")
                     continue
         else:
-            # Log unknown message types for debugging
-            print(f"🔍 Unknown message type: {t}")
+            # Log error messages with full details
+            if t == "error":
+                print(f"❌ Finnhub error: {msg_json}")
+                error_msg = msg_json.get("msg", "Unknown error")
+                print(f"❌ Error details: {error_msg}")
+            else:
+                # Log other unknown message types for debugging
+                print(f"🔍 Unknown message type: {t} - {msg_json}")
 
     except Exception as e:
         print(f"❌ Message handling error: {e}")
