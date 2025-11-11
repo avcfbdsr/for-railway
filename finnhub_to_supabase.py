@@ -27,8 +27,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "market-excel")
 
-# Replace with symbols you want - try multiple Bitcoin symbols
-SYMBOLS = ["BINANCE:BTCUSD", "BINANCE:BTCUSDT", "BTCUSD"]  # Try multiple formats
+# Replace with symbols you want - use working symbols only
+SYMBOLS = ["BINANCE:BTCUSDT"]  # Only use symbols that work on Finnhub
 
 # How often to flush/upload Excel file (seconds)
 UPLOAD_INTERVAL = 60 * 5  # upload every 5 minutes (adjust as needed)
@@ -147,8 +147,10 @@ async def handle_message(msg_json):
             data = msg_json.get("data", [])
             if not data:
                 return None
-                
-            print(f"📈 Processing {len(data)} trades for {symbol}")
+            
+            # Get symbol from first trade for logging
+            first_symbol = data[0].get("s", "Unknown") if data else "Unknown"
+            print(f"📈 Processing {len(data)} trades for {first_symbol}")
             
             for trade in data:
                 try:
