@@ -48,8 +48,14 @@ def ts_to_min_key(ts_seconds):
     dt = datetime.fromtimestamp(ts_seconds, tz=timezone.utc).replace(second=0, microsecond=0)
     return dt.isoformat()
 
+# Global counters
+candle_count = 0
+last_candle_time = None
+
 def update_agg(symbol, price, volume, ts):
     """Aggregate trade into the current minute bucket for symbol."""
+    global candle_count, last_candle_time
+    
     minute_key = ts_to_min_key(ts)
     key = (symbol, minute_key)
     
@@ -71,7 +77,9 @@ def update_agg(symbol, price, volume, ts):
             
             try:
                 supabase.table("candles").insert(candle_data).execute()
-                print(f"🔥 LIVE Candle: {existing_symbol} {existing_minute_key} O:{bucket['open']:.2f} H:{bucket['high']:.2f} L:{bucket['low']:.2f} C:{bucket['close']:.2f} V:{bucket['volume']:.4f} T:{bucket['trade_count']}")
+                candle_count += 1
+                last_candle_time = existing_minute_key
+                print(f"🔥 Candle #{candle_count}: {existing_symbol} {existing_minute_key} O:{bucket['open']:.2f} H:{bucket['high']:.2f} L:{bucket['low']:.2f} C:{bucket['close']:.2f} V:{bucket['volume']:.4f} T:{bucket['trade_count']}")
             except Exception as e:
                 print(f"❌ Error inserting candle: {e}")
             
@@ -138,20 +146,35 @@ async def websocket_loop():
     reconnect_delay = 1
     while True:
         try:
-            async with websockets.connect(WS_URL, ping_interval=20) as ws:
-                print("Connected to Finnhub websocket")
+            print(f"🔌 Connecting to Finnhub websocket...")
+            async with websockets.connect(
+                WS_URL, 
+                ping_interval=20, 
+                ping_timeout=10,
+                close_timeout=10
+            ) as ws:
+                print("✅ Connected to Finnhub websocket")
                 await subscribe(ws, SYMBOLS)
                 reconnect_delay = 1
+                
                 async for message in ws:
-                    msg_json = json.loads(message)
-                    response = await handle_message(msg_json)
-                    if response:
-                        await ws.send(json.dumps(response))
+                    try:
+                        msg_json = json.loads(message)
+                        response = await handle_message(msg_json)
+                        if response:
+                            await ws.send(json.dumps(response))
+                    except Exception as e:
+                        print(f"❌ Message handling error: {e}")
+                        continue
+                        
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"🔌 Connection closed: {e}")
         except Exception as e:
-            print("Websocket error:", e)
-            print(f"Reconnecting in {reconnect_delay}s...")
-            await asyncio.sleep(reconnect_delay)
-            reconnect_delay = min(60, reconnect_delay * 2)
+            print(f"❌ Websocket error: {e}")
+        
+        print(f"🔄 Reconnecting in {reconnect_delay}s...")
+        await asyncio.sleep(reconnect_delay)
+        reconnect_delay = min(30, reconnect_delay * 1.5)  # Exponential backoff
 
 def finalize_old_buckets(cutoff_seconds=None):
     """Finalize minute buckets older than cutoff: insert to Supabase and remove from agg_buckets."""
@@ -257,6 +280,12 @@ async def continuous_candle_loop():
             print("Candle finalization error:", e)
         await asyncio.sleep(10)  # Check every 10 seconds
 
+async def status_reporter():
+    """Report status every 10 minutes"""
+    while True:
+        await asyncio.sleep(600)  # 10 minutes
+        print(f"📊 Status: {candle_count} candles created. Last: {last_candle_time}")
+
 async def main():
     # Basic check: env vars
     if not FINNHUB_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
@@ -266,8 +295,11 @@ async def main():
     print("🚀 Starting Bitcoin data collector...")
     print("📊 Data will be stored in Supabase 'candles' table")
 
-    # Start websocket listener only - candles insert in real-time
-    await websocket_loop()
+    # Start websocket listener and status reporter
+    await asyncio.gather(
+        websocket_loop(),
+        status_reporter()
+    )
 
 if __name__ == "__main__":
     try:
