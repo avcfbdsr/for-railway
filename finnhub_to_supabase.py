@@ -27,8 +27,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "market-excel")
 
-# Replace with symbols you want - using exact TradingView format
-SYMBOLS = ["BTCUSD"]  # Standard BTC/USD pair like TradingView
+# Replace with symbols you want - using exact TradingView Binance format
+SYMBOLS = ["BINANCE:BTCUSDT"]  # Exact TradingView Binance symbol
 
 # How often to flush/upload Excel file (seconds)
 UPLOAD_INTERVAL = 60 * 5  # upload every 5 minutes (adjust as needed)
